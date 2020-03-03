@@ -14,13 +14,16 @@ defmodule MasterProxy do
   def init(opts), do: {:ok, opts}
 
   def start_link(opts) do
+    opts = merge_runtime_and_compiled_opts(opts)
     {name, opts} = Keyword.pop(opts, :name, __MODULE__)
 
-    load_runtime_config(opts)
+    backends =
+      opts
+      |> Keyword.get(:backends, [])
 
     children =
       Enum.reduce([:http, :https], [], fn scheme, result ->
-        case Application.get_env(:master_proxy, scheme) do
+        case Keyword.get(opts, scheme) do
           nil ->
             # no config for this scheme, that's ok, just skip
             result
@@ -31,7 +34,9 @@ defmodule MasterProxy do
             cowboy_opts =
               [
                 port: port_to_integer(port),
-                dispatch: [{:_, [{:_, MasterProxy.Cowboy2Handler, {nil, nil}}]}]
+                dispatch: [
+                  {:_, [{:_, MasterProxy.Cowboy2Handler, {backends, opts}}]}
+                ]
               ] ++ :proplists.delete(:port, scheme_opts)
 
             Logger.info("[master_proxy] Listening on #{scheme} with options: #{inspect(opts)}")
@@ -44,13 +49,28 @@ defmodule MasterProxy do
     Supervisor.start_link(children, supervisor_opts)
   end
 
-  defp load_runtime_config(options) do
-    if Keyword.keyword?(options) do
-      Enum.each(options, fn {key, value} ->
-        Application.put_env(:master_proxy, key, value)
+  defp merge_runtime_and_compiled_opts(options) do
+    relevant_keys = [:http, :https, :log_requests, :conn, :backends, :name]
+    compiled_opts = Application.get_all_env(:master_proxy)
+
+    env_configed =
+      relevant_keys
+      |> Enum.reduce([], fn key, acc ->
+        set_opt_or_skip(key, acc, compiled_opts)
       end)
+
+    relevant_keys
+    |> Enum.reduce(env_configed, fn key, acc ->
+      set_opt_or_skip(key, acc, options)
+    end)
+  end
+
+  def set_opt_or_skip(key, target_list, source_list) do
+    if val = Keyword.get(source_list, key) do
+      target_list
+      |> Keyword.put(key, val)
     else
-      raise("the options provided to MasterProxy must be a keyword list")
+      target_list
     end
   end
 
