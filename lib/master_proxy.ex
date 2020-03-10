@@ -14,7 +14,7 @@ defmodule MasterProxy do
   def init(opts), do: {:ok, opts}
 
   def start_link(opts) do
-    opts = merge_runtime_and_compiled_opts(opts)
+    opts = Keyword.merge(Application.get_all_env(:master_proxy), opts)
     {name, opts} = Keyword.pop(opts, :name, __MODULE__)
 
     backends =
@@ -47,31 +47,6 @@ defmodule MasterProxy do
 
     supervisor_opts = [strategy: :one_for_one, name: :"#{name}.Supervisor"]
     Supervisor.start_link(children, supervisor_opts)
-  end
-
-  defp merge_runtime_and_compiled_opts(options) do
-    relevant_keys = [:http, :https, :log_requests, :conn, :backends, :name]
-    compiled_opts = Application.get_all_env(:master_proxy)
-
-    env_configed =
-      relevant_keys
-      |> Enum.reduce([], fn key, acc ->
-        set_opt_or_skip(key, acc, compiled_opts)
-      end)
-
-    relevant_keys
-    |> Enum.reduce(env_configed, fn key, acc ->
-      set_opt_or_skip(key, acc, options)
-    end)
-  end
-
-  def set_opt_or_skip(key, target_list, source_list) do
-    if val = Keyword.get(source_list, key) do
-      target_list
-      |> Keyword.put(key, val)
-    else
-      target_list
-    end
   end
 
   # :undefined is what :proplist.get_value returns
