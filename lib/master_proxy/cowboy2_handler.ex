@@ -3,12 +3,12 @@ defmodule MasterProxy.Cowboy2Handler do
 
   @moduledoc false
 
-  defp connection() do
-    Application.get_env(:master_proxy, :conn, Plug.Cowboy.Conn)
+  defp connection(opts) do
+    Keyword.get(opts, :conn, Plug.Cowboy.Conn)
   end
 
-  defp log_request(message) do
-    if Application.get_env(:master_proxy, :log_requests, true) do
+  defp log_request(message, logs_active) do
+    if logs_active do
       Logger.debug(message)
     end
   end
@@ -17,20 +17,16 @@ defmodule MasterProxy.Cowboy2Handler do
     plug: MasterProxy.Plug.NotFound
   }
 
-  # endpoint and opts are not passed in because they
-  # are dynamically chosen
-  def init(req, {_endpoint, _opts}) do
-    log_request("MasterProxy.Cowboy2Handler called with req: #{inspect(req)}")
+  def init(req, {backends, opts}) do
+    logs_active = Keyword.get(opts, :log_requests, true)
+    log_request("MasterProxy.Cowboy2Handler called with req: #{inspect(req)}", logs_active)
 
-    conn = connection().conn(req)
-
-    # extract this and pass in as a param somehow
-    backends = Application.get_env(:master_proxy, :backends)
+    conn = connection(opts).conn(req)
 
     backend = choose_backend(conn, backends)
-    log_request("Backend chosen: #{inspect(backend)}")
+    log_request("Backend chosen: #{inspect(backend)}", logs_active)
 
-    dispatch(backend, req)
+    dispatch(backend, req, opts)
   end
 
   defp choose_backend(conn, backends) do
@@ -39,20 +35,20 @@ defmodule MasterProxy.Cowboy2Handler do
     end)
   end
 
-  defp dispatch(%{phoenix_endpoint: endpoint}, req) do
+  defp dispatch(%{phoenix_endpoint: endpoint}, req, _opts) do
     # we don't pass in any opts here because that is how phoenix does it
     # see https://github.com/phoenixframework/phoenix/blob/master/lib/phoenix/endpoint/cowboy2_adapter.ex#L42
     Phoenix.Endpoint.Cowboy2Handler.init(req, {endpoint, endpoint.init([])})
   end
 
-  defp dispatch(%{plug: plug} = backend, req) do
-    conn = connection().conn(req)
+  defp dispatch(%{plug: plug} = backend, req, opts) do
+    conn = connection(opts).conn(req)
 
     opts = Map.get(backend, :opts, [])
     handler = plug
 
     # Copied from https://github.com/phoenixframework/phoenix/blob/master/lib/phoenix/endpoint/cowboy2_handler.ex
-    c = connection()
+    c = connection(opts)
 
     %{adapter: {^c, req}} =
       conn
